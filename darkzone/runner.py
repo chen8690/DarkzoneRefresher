@@ -56,6 +56,9 @@ except Exception:                           # noqa: BLE001
     def rapid_ocr_available():
         return False
 
+# 本工具版本号；发布 tag 用 v0.1.0，命令行 --version 读它
+__version__ = "0.1.0"
+
 # 默认 OCR 后端；设 DARKZONE_OCR=rapid 可以让整套（含离线套件）跑在 RapidOCR 下
 DEFAULT_OCR = os.environ.get("DARKZONE_OCR", "auto")
 
@@ -1213,6 +1216,7 @@ def main(argv=None):
     import argparse
 
     ap = argparse.ArgumentParser(description="暗区突围·武装派遣自动刷新（默认 dry-run，不点任何东西）")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("--rules", default=None,
                     help="规则表 xlsx；默认先找项目根 规则表.xlsx，再找桌面 工作簿1.xlsx")
     ap.add_argument("--block", type=int, default=0)

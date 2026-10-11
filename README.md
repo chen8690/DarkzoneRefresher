@@ -13,6 +13,7 @@
 - [附录 A：工程细节](#附录-a工程细节)
   - [仓库里不提交什么（`.gitignore`）](#仓库里不提交什么gitignore)
 - [附录 B：性能与真机记录](#附录-b性能与真机记录)
+- [当前版本](#当前版本)
 - [许可证](#许可证)
 
 ---
@@ -854,6 +855,19 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
       （窗口自动对齐那次点击，`darkzone\fake_screens.py`）。
       七套件复跑全 `exit 0` / `FAIL 0`（`logs\suite_W_*.txt`，`test_runner_offline` **58.8 s**）。
       第 19/21 条里「弹窗要到下一轮才确认」的旧模型已被重读网取代。
+
+---
+
+## 当前版本
+
+**v0.1.0**（首个公开版本，2026-10-11）。命令行可以直接查：
+
+```
+python -m darkzone.runner --version     →  runner.py 0.1.0
+```
+
+版本号写死在 `darkzone/runner.py` 的 `__version__ = "0.1.0"`；历史版本与发布说明见
+仓库的 [Releases](https://github.com/chen8690/DarkzoneRefresher/releases)。
 
 ---
 
