@@ -1,0 +1,37 @@
+# ============ 运行产物：日志、证据截图、花销台账 ============
+logs/
+logs_test/
+logs_fake/
+
+# ============ 一次性探针输出（项目根）============
+*_out.txt
+build.log
+xlsx_dump.txt
+
+# ============ 构建与打包产物 ============
+build/
+dist/
+__pycache__/
+*.pyc
+DarkzoneRefresher.spec
+*.spec
+
+# ============ 虚拟环境 ============
+.venv/
+venv/
+
+# ============ 测试中间产物 ============
+crops/
+ocr_test.png
+*.h264
+*.bin
+
+# ============ 本地配置（含本机绝对路径 / ADB / FFmpeg 路径）============
+app_config.json
+
+# ============ 编辑器 / 系统 ============
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

@@ -1,0 +1,20 @@
+{
+  "_note": "坐标一律用「图片宽高的比例」表示。横向比例已在真机截图 samples/live_list.png / samples/live_detail.png (3200x1440) 上按像素量过：取亮色 ↻ 字形簇中心的 x 除以图宽。纵向位置运行时由 OCR 行给出，这里只固定横向比例。dialog_confirm_xy_frac 是刷新确认框「确定」按钮的比例坐标（1592/3200, 1032/1440），只有 --fast-confirm 盲点快路才用。",
+  "screen_list": {
+    "refresh_x_frac": {
+      "普通队员": 0.3314,
+      "精锐队员": 0.6217,
+      "暗区首领": 0.9120
+    },
+    "select_x_frac_hint": [0.2828, 0.5728, 0.8625],
+    "select_y_frac_hint": 0.913
+  },
+  "screen_detail": {
+    "refresh_x_frac": 0.9178,
+    "right_panel_min_x_frac": 0.60,
+    "dispatch_xy_frac": [0.808, 0.926]
+  },
+  "dialog_confirm_xy_frac": [0.4975, 0.7167],
+  "tap_sweep_dx_frac": [0.0, -0.012, 0.012, -0.024, 0.024],
+  "tap_sweep_dy_frac": [0.0, -0.012, 0.012]
+}
