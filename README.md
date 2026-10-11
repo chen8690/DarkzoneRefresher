@@ -864,7 +864,7 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
 ```
 MIT License
 
-Copyright (c) 2026 27752
+Copyright (c) 2026 chen8690
 ```
 
 第三方依赖各自保留自己的许可证（`openpyxl` MIT、`Pillow` HPND、`numpy` BSD-3-Clause、
