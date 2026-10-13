@@ -1,4 +1,4 @@
-param([string]$Lang = "zh-Hans-CN")
+﻿param([string]$Lang = "zh-Hans-CN")
 
 # 常驻 OCR worker（2026-10-11 提速）：把 WinRT 引擎和 powershell 进程启动成本只付一次。
 #

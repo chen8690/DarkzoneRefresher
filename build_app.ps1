@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   打包「暗区突围·武装派遣 自动刷新」为独立 Windows 桌面应用。
 .DESCRIPTION
@@ -110,10 +110,15 @@ Write-Host "`n=== 4/4 补充文件 ===" -ForegroundColor Cyan
 
 $DistDir = "$ScriptDir\dist\DarkzoneRefresher"
 
-# 复制 PowerShell OCR 脚本到 dist 根和 darkzone 子目录
+# 复制 PowerShell OCR 脚本到 dist
+# onedir 布局下，`--add-data=…\darkzone;darkzone` 实际落点是 `_internal\darkzone\`
+# （win_ocr.py 里 HERE 会被解析到那里，运行时找得到）；这里再往 exe 同级的
+# `darkzone\` 也放一份，作为老布局的兜底，两处都有才不挑 PyInstaller 版本。
+New-Item -ItemType Directory -Force "$DistDir\_internal\darkzone" | Out-Null
+New-Item -ItemType Directory -Force "$DistDir\darkzone" | Out-Null
 foreach ($ps1 in (Get-ChildItem "$ScriptDir\darkzone\*.ps1" -ErrorAction SilentlyContinue)) {
-    Copy-Item $ps1.FullName "$DistDir\darkzone\$($ps1.Name)" -Force -ErrorAction SilentlyContinue
-    Copy-Item $ps1.FullName "$DistDir\$($ps1.Name)" -Force -ErrorAction SilentlyContinue
+    Copy-Item $ps1.FullName "$DistDir\_internal\darkzone\$($ps1.Name)" -Force
+    Copy-Item $ps1.FullName "$DistDir\darkzone\$($ps1.Name)" -Force
 }
 
 # 复制 profiles
