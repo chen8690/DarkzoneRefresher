@@ -105,7 +105,7 @@ class Config:
                                     # 词条还是旧的」动画中间帧 → 误判点空了 → 再点一次 ↻ 白花 500 券。
                                     # 0 = 自动（实际走流路取 1 次，gzip/raw/png 路不额外读）。
                                     # 为什么自动档是 1 而不是 2：盲点默认路在点完「确定」后已经
-                                    # 等满 `blind_settle`（默认 2.5 s），那一屏就是最终态，第 2 次
+                                    # 等满 `blind_settle`（默认 2.2 s），那一屏就是最终态，第 2 次
                                     # 复读基本白等 ≈0.6 s/发（2026-10-13 真机 5 组配置对照：
                                     # settle-reads 1 + blind-settle 2.2 → 中位 4.9 s；
                                     # settle-reads 2 → 中位 6.3 s；settle-reads 0 → 5.3 s 且
@@ -630,7 +630,7 @@ class Runner:
     def _blind_confirm(self, tag, before_rows=None, row_index=None):
         """盲点「确定」：不读那一屏弹窗，直接点 profile 里量好的确认框坐标（真机 1592,1032）。
 
-        只有 `dialog_mode="blind"`（默认）才走这里。点完等 `blind_settle`（默认 2.5 s = 实测到的
+        只有 `dialog_mode="blind"`（默认）才走这里。点完等 `blind_settle`（默认 2.2 s = 实测到的
         「框已被受理、复核那一屏就是最终态」的时刻，见 `Config.blind_settle`）再读一屏，三种结果各有处置：
 
         - **框没了，而且这一行的名字真的换了**：盲点命中，这一下的「抽签」已经发生 →
