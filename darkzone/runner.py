@@ -1421,7 +1421,8 @@ def main(argv=None):
                          "fast=原始帧+本地 JPEG；png=设备端 PNG")
     ap.add_argument("--settle-reads", type=int, default=Config.settle_reads,
                     help=f"画面变了之后再连读几次确认稳定，默认 {Config.settle_reads}"
-                         f"（0 = 自动：实际走视频流取帧时取 2，其余路不额外读；防读到动画中间帧）")
+                         f"（0 = 自动：实际走视频流取帧时取 1，其余路不额外读；防读到动画中间帧。"
+                         f"要双保险用 2，每发多约 0.6 秒；别设 0——那会连时间闸门一起关掉）")
     ap.add_argument("--settle-delay", type=float, default=Config.settle_delay,
                     help=f"稳定性复读之间等多久，默认 {Config.settle_delay}")
     ap.add_argument("--settle-guard", type=float, default=Config.settle_guard,
