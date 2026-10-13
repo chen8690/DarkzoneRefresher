@@ -84,6 +84,8 @@ def load_config() -> dict:
         "profile": "default",
         "ocr": "win",
         "limit": 40,
+        "dialog_mode": "blind",
+        "wait_dialog": 0.85,
         "adb_path": "adb",
         "ffmpeg_path": "ffmpeg",
         "python_path": DSH_PYTHON,
@@ -99,6 +101,13 @@ def load_config() -> dict:
     # 归一化：老版本配置可能存过 runner 不认的值（如 win_ocr），强制回退合法值
     if defaults.get("ocr") not in ("auto", "win", "rapid"):
         defaults["ocr"] = "win"
+    # 确认框处置方式：blind=盲点快路（2026-10-13 起的默认），read=读框文字再点（老路）
+    if defaults.get("dialog_mode") not in ("blind", "read"):
+        defaults["dialog_mode"] = "blind"
+    try:
+        defaults["wait_dialog"] = min(5.0, max(0.0, float(defaults.get("wait_dialog", 0.85))))
+    except (TypeError, ValueError):
+        defaults["wait_dialog"] = 0.85
     return defaults
 
 
@@ -196,7 +205,20 @@ class DarkzoneApp(tk.Tk):
         ttk.Combobox(row1, textvariable=self.profile_var, values=self._list_profiles(),
                      width=10).pack(side=tk.LEFT, padx=4)
 
-        ttk.Checkbutton(row1, text="安全预演优先", variable=tk.BooleanVar(value=self.cfg["dry_run_first"])).pack(
+        # 确认框处置：blind=盲点快路（默认，不读弹窗那屏、按坐标点「确定」后再复核一屏）
+        ttk.Label(row1, text="  确认框:").pack(side=tk.LEFT)
+        self.dialog_mode_var = tk.StringVar(value=self.cfg["dialog_mode"])
+        ttk.Combobox(row1, textvariable=self.dialog_mode_var, values=["blind", "read"],
+                     width=6, state="readonly").pack(side=tk.LEFT, padx=4)
+
+        ttk.Label(row1, text="  等框(s):").pack(side=tk.LEFT)
+        self.wait_dialog_var = tk.DoubleVar(value=self.cfg["wait_dialog"])
+        ttk.Spinbox(row1, textvariable=self.wait_dialog_var, from_=0.0, to=5.0,
+                    increment=0.05, width=5).pack(side=tk.LEFT, padx=4)
+
+        self.dry_first_var = tk.BooleanVar(value=bool(self.cfg.get("dry_run_first", True)))
+
+        ttk.Checkbutton(row1, text="安全预演优先", variable=self.dry_first_var).pack(
             side=tk.LEFT, padx=12
         )
 
@@ -288,6 +310,9 @@ class DarkzoneApp(tk.Tk):
             profile=self.profile_var.get(),
             ocr=self.ocr_var.get(),
             limit=self.limit_var.get(),
+            dialog_mode=self.dialog_mode_var.get(),
+            wait_dialog=float(self.wait_dialog_var.get()),
+            dry_run_first=bool(self.dry_first_var.get()),
             adb_path=self.adb_var.get(),
             ffmpeg_path=self.ffmpeg_var.get(),
             python_path=self.python_var.get(),
@@ -317,6 +342,8 @@ class DarkzoneApp(tk.Tk):
             "--rules", xlsx,
             "--ocr", self.ocr_var.get(),
             "--limit", str(self.limit_var.get()),
+            "--dialog-mode", self.dialog_mode_var.get(),
+            "--wait-dialog", str(float(self.wait_dialog_var.get())),
         ]
         if mode == "live":
             cmd.append("--live")

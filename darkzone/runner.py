@@ -140,10 +140,20 @@ class Config:
                                     # 其余路取 1 = 只看一次，老行为）。
                                     # 注意这跟 settle_reads 不是一回事：settle 管「画面稳没稳」，
                                     # confirm 管「结论可不可信」。
-    fast_confirm: bool = False      # 盲点快路：点完 ↻ 不等读屏，直接按 profile 的「确定」坐标点一下
-                                    # （省掉一次读屏 ≈3 s，每次刷新 ≈4 s）。默认关：这条路不看弹窗
-                                    # 文字就确认，万一弹出的是别的框也会被确认，只在确认过弹窗形态时开。
-    wait_dialog: float = 0.7        # 盲点前等弹窗出现的时间（真机实测弹窗 ~0.7 s 画出来）
+    dialog_mode: str = "blind"      # 点完 ↻ 之后那个「是否刷新特殊条件」确认框怎么点：
+                                    #   "blind"（默认，= 旧的 --fast-confirm 盲点快路）：不读那一屏
+                                    #     弹窗，先等 `wait_dialog` 让框画出来，再按 profile 里量好的
+                                    #     「确定」坐标点一下，然后才读屏看结果。一次刷新少读一屏。
+                                    #     「确定」是照像素位置点的，不是按框文字点的；位置错了最多
+                                    #     白点一次空（读数落回重读网），不会去确认别的按钮。
+                                    #   "read"：老行为——先读屏、只放行含「刷新」的框再点它的热区；
+                                    #     只读一屏、且拒绝任何非刷新弹窗（对照/保守用）。
+    wait_dialog: float = 0.85       # 盲点「确定」前等确认框画出来的秒数。
+                                    # 真机实测该框 0.8~2.6 s 才画出来，所以这个值决定盲点中不中：
+                                    # 旧默认 0.7 s 偏小 → 盲点常点空、由 `_handle_dialog` 补点一次、
+                                    # 闸门跟着跑两遍，charge.sec 反而 5.19 s（比默认路还慢）。
+                                    # 0.85 s 是「闸门 0.9 s 已经替我们把动画窗口睡过去」之后的取值：
+                                    # 盲点前累计等 0.25+0.55+0.85 = 1.65 s。实机想更稳就调 `--wait-dialog`。
     flush_pending: bool = True      # 收尾补确认（默认开）：一轮的**最后一次** ↻，确认框常在跑完之后
                                     # 才画出来。真机实测（logs\live_guard_slot2_1.txt 之后的启动
                                     # abort）：那轮结束后手机上还挂着「是否刷新特殊条件：SEK堡垒
@@ -166,9 +176,30 @@ class Config:
     device_size: tuple | None = None
     lang: str = "zh-Hans-CN"
     ocr: str = DEFAULT_OCR          # auto/win=Windows 自带 OCR（快）；rapid=项目 .venv 里的 RapidOCR
+    fast_confirm: bool | None = None   # 【旧字段，别再用】2026-10-11 深夜确认框改成盲点快路之后，
+                                    # 开关换成 `dialog_mode`（"blind"/"read"）。这个字段只为兼容
+                                    # 还传 `Config(fast_confirm=True)` 的旧脚本/旧套件而保留：
+                                    # True → dialog_mode="blind"，None/False → 保持 dialog_mode 原值
+                                    # （默认本来就是 blind，要 read 请显式写 dialog_mode="read"）。
 
     def limit(self) -> int:
         return max(self.refresh_limit_min, min(self.refresh_limit_max, int(self.max_refresh_per_row)))
+
+    def __post_init__(self):
+        """把旧字段折到新开关上，并校验 `dialog_mode`。
+
+        2026-10-11 深夜：确认框默认改成盲点快路，开关从 `fast_confirm: bool` 换成
+        `dialog_mode: str`。为不打断还传 `fast_confirm=True` 的旧脚本/旧套件，这里把它
+        折成 `dialog_mode="blind"`；`False`/`None` **不**把模式改回 "read"（默认就是 blind，
+        要 read 就显式写 `dialog_mode="read"` 或 `--dialog-mode read`）。
+        """
+        legacy = getattr(self, "fast_confirm", None)
+        if legacy:                      # 只认 True：False/None 不改 dialog_mode（默认就是 blind）
+            self.dialog_mode = "blind"
+        self.fast_confirm = bool(legacy)
+        if (self.dialog_mode or "").lower() not in ("blind", "read"):
+            raise ValueError(f"dialog_mode 只能是 blind/read，收到 {self.dialog_mode!r}")
+        self.dialog_mode = (self.dialog_mode or "blind").lower()
 
 
 class Runner:
@@ -409,6 +440,20 @@ class Runner:
             return False
         return similarity(canon(now), canon(old)) < ROW_SAME_MIN
 
+    @classmethod
+    def _still_old(cls, st, before_rows, index):
+        """这一屏读到的还是**刷卡前那一件**吗（弹窗屏不算旧词条 —— 那屏还没刷卡）。
+
+        `settle_wait_change`（等名字变）与盲点路的回落判据共用这一条。
+        """
+        if st["kind"] == "dialog":
+            return False
+        if before_rows is None:
+            return False
+        if index is None:
+            return st and cls._rows_sig(st) == before_rows
+        return not cls._row_changed(st, before_rows, index)
+
     # ------------------------------------------------------------------ 点击
     def _dispatch_keepout(self):
         """「派遣」按钮的禁点矩形（图像坐标）：以 OCR 到的「派遣」文字框为中心向外扩一圈。
@@ -545,17 +590,90 @@ class Runner:
             raise SafetyError(f"点了「确定」弹窗还在（{prompt}）：坐标可能不准，停手不继续点")
         return st2, True
 
-    def _blind_confirm(self, tag):
-        """盲点「确定」：不读屏直接点 profile 里量好的确认框坐标（1592,1032）。
+    def _blind_confirm(self, tag, before_rows=None, row_index=None):
+        """盲点「确定」：不读那一屏弹窗，直接点 profile 里量好的确认框坐标（真机 1592,1032）。
 
-        只有 --fast-confirm 才走这里。点完照样会读一次屏：如果读回来还是弹窗，
-        就回落到正常弹窗处理（重读→只放行含「刷新」的框），所以最多比正常路多一次空点。
+        只有 `dialog_mode="blind"`（默认）才走这里。点完读一屏，三种结果各有处置：
+
+        - **框被点掉了、而且这一行的名字真的换了**：盲点命中，这一下的「抽签」已经发生 →
+          `confirmed=True`，睡掉时间闸门再补读一屏，好让结果落到最新。
+        - **框被点掉了、名字还是旧的**：说不清是「点空了」还是「真抽了但新词条还没画出来」
+          （真机 `land_probe3` 量过：点完确定新词条要 ~0.7 s 才落屏；动画窗口更久）。
+          这一屏**绝不记账**，交给 `_wait_row_changed` 按 `settle_wait_change` 的预算继续读：
+          等的过程中读到弹窗（说明刚才那下没点掉框）就把框的处置权交回 `_handle_dialog`；
+          预算用完名字还是旧的 → 也返回 `confirmed=False`，当「没抽」处理，绝不当成刷新生效。
+        - **框还在**（读到了弹窗那一屏）：0.85 s 等得太早、点空了，**不重复点**，
+          返回 `confirmed=False` 交调用点，由 `_handle_dialog` 重读框文字、只放行含「刷新」的框再点。
+
+        为什么点空也没有额外风险：「确定」是照像素位置点的，位置不对最多白点一下空屏，
+        游戏只会忽略它；**不是**按框里文字决定点不点，所以不存在「弹出别的框也被确认」。
+
+        `confirmed=False` 的含义是**结论已经交给调用方**（框还在 → `_handle_dialog` 去点；
+        等不到变化 → 重读网继续看）：这两种情况都**不许**再往下走「补点确认框 / 扫描候选点」
+        ——那些补点会再点一次「确定」，每一次都是一个 500 券的幽灵记账（场景 V2/W 钉的就是它）。
         """
         frac = self.profile.get("dialog_confirm_xy_frac") or [0.4975, 0.7167]
         at = (frac[0] * self.mapper.iw, frac[1] * self.mapper.ih)
-        self.log("fast_confirm", tag=tag, at=[round(v) for v in at])
+        self.log("fast_confirm", tag=tag, at=[round(v) for v in at], mode="blind")
         self._tap(at, f"{tag}_fastok")
-        return at
+        time.sleep(self.cfg.wait_after_tap + self.cfg.wait_after_screen)
+        st2 = self._read(f"ev_{tag}_fastok")
+        if st2["kind"] == "dialog":
+            self.log("blind_missed", tag=tag, image=st2["image"],
+                     note="盲点后确认框还在：等太早了/点空了，交回读框那条路")
+            return st2, False
+        changed = (before_rows is None or row_index is None
+                   or self._row_changed(st2, before_rows, row_index))
+        if not changed:
+            # 框没了、可名字还是旧的：说不清是「点空了」还是「真抽了但新词条还没画出来」
+            # （动画窗口里新词条要过几帧才落屏）。按 `settle_wait_change` 的预算继续读。
+            self.log("blind_unclear", tag=tag, image=st2["image"],
+                     note="盲点后框没了、这一行名字还没变：等新词条落屏，等不到不记账")
+            st3 = self._wait_row_changed(tag, st2, before_rows, row_index)
+            if st3 is None:                     # 等出了弹窗（说明刚才那下没点掉框）
+                return st2, False
+            st2 = st3
+            changed = self._row_changed(st2, before_rows, row_index)
+        # 命中：真机是「顶栏先扣券 → 新词条过一会儿才画出来」，所以要睡过动画窗口再补读一屏，
+        # 否则会把刷新前的旧画面当结果（见 Config.settle_guard）。闸门只在这里跑一次：
+        # 盲点已经自己确认过弹窗了，稳定复读那层就不该再跑（否则 `why` 两次、每次刷新多 0.9 s）。
+        time.sleep(self.cfg.settle_delay)
+        if changed:
+            self._settle_guard_wait(tag, why="blind_confirm")
+        # 名字真的换了才算「这一下抽了」；预算用完还是旧名字 → `changed=False`，
+        # 由调用点的重读网继续（它退出时按行级判据决定记不记账），绝不变成幽灵 500 券。
+        return self._read(f"ev_{tag}_blindok"), changed
+
+    def _wait_row_changed(self, tag, st, before_rows, row_index):
+        """等这一行的名字真的变了（盲点路回落专用，预算同 `settle_wait_change`）。
+
+        返回：等到了 → 最后那一屏；预算用完还是旧的 → 还是那一屏；
+        等的过程中读到确认框 → `None`（调用方按「框还在」处理，把球交给 `_handle_dialog`）。
+        """
+        budget = self.cfg.settle_wait_change
+        if budget <= 0:
+            self.log("wait_change", tag=tag, slot=row_index, reads=0, waited=0.0,
+                     changed=False, screen_kind=st["kind"], raw=self._row_raw(st, row_index))
+            return st
+        t0, k = time.time(), 0
+        cap = int(budget / 0.1) + 4
+        while time.time() - t0 < budget and k < cap:
+            k += 1
+            time.sleep(max(self.cfg.settle_delay, 0.1))
+            nxt = self._read(f"ev_{tag}_blindwait{k}")
+            if nxt["kind"] == "dialog":
+                self.log("wait_change", tag=tag, slot=row_index, reads=k,
+                         waited=round(time.time() - t0, 2), changed=False,
+                         screen_kind="dialog", raw=None)
+                return None
+            st = nxt
+            if not self._still_old(st, before_rows, row_index):
+                break
+        changed = not self._still_old(st, before_rows, row_index)
+        self.log("wait_change", tag=tag, slot=row_index, reads=k,
+                 waited=round(time.time() - t0, 2), changed=changed,
+                 screen_kind=st["kind"], raw=self._row_raw(st, row_index))
+        return st
 
     def _tap_progressed(self, st, before_sig, before_rows, row_index, blind=False):
         """这一下点击**真的生效了**没有（返回 False = 现在这一屏还不能算「点了有效果」）。
@@ -569,13 +687,17 @@ class Runner:
           「原始字符串不相等」当判据，正是这 4 次（30 次里）**没弹窗也记了 500 券**的来路。
         - 其它点击（列表页 ↻、选择）：沿用整屏签名（那边没有「逐行文字」可看）。
 
-        `blind=True`（`--fast-confirm` 的盲点快路）：那条路**故意不读弹窗**，拿不到上面那条凭据，
-        只能退回相似度判据（`_row_changed`：噪声写法不算换件）—— 这是这条路唯一能给的弱保证，
-        也是 README 里「这个开关目前不值得开」的原因之一。
+        `blind=True`（`dialog_mode="blind"` 的盲点快路，默认）：那一屏弹窗**被盲点掉了**、
+        没读到，所以拿不到上面那条凭据，只能退回相似度判据（`_row_changed`：噪声写法不算换件）。
+        这个弱保证只在**盲点确认成功之后**用：那一下要是点空了（框还在），
+        `_blind_confirm` 会返回 `confirmed=False`，这里就不会被当成「已生效」。
         """
         if st["kind"] == "dialog":
             return True
         if row_index is not None:
+            # 盲点路：点 ↻ 那一下的「抽签」凭据（弹窗）被盲点掉了，所以这一下只在
+            # **盲点已有定论**（框被点掉、或已交给 `_handle_dialog`）时，才允许用行级判据
+            # 兜底；没走盲点又没读到弹窗的行级点击 → 不算生效。
             return bool(blind) and self._row_changed(st, before_rows, row_index)
         return self._sig(st) != before_sig
 
@@ -589,28 +711,33 @@ class Runner:
         真机确认框实测要 0.8~2.6 s 才画出来，这段就是等它）。
         没有这层的话「读早了」会被当成「点空了」→ 扫描再点一次 → 白花 500 券。
 
-        expect_dialog=True 且开了 fast_confirm 时走盲点快路：点 ↻ 后不读屏，直接
-        按量好的坐标点「确定」，再读一次新词条——一次刷新从 2 次读屏降到 1 次。
+        `expect_dialog=True` 且 `dialog_mode="blind"`（默认）时走盲点快路：点 ↻ 后不等
+        读到弹窗文字，先 `wait_dialog` 让框画出来、直接点它的「确定」坐标，再读一屏
+        —— 一次刷新从 2 次读屏降到 1 次（省掉的那屏大约 2.4 s 里的一屏）。
 
         before_rows 给了且**实际取屏路**需要稳定性复读时（流路自动开，见 `eff_settle_reads`）：
         见 `_rows_sig` 的注释。
+
+        返回 `(st, changed, blind_done)`：`blind_done=True` 表示盲点那一下**已经有定论**
+        （框被点掉、这一行的名字也真的换了），调用点就**不许**再补点确认框 / 扫描候选点
+        ——那些补点会再点一次「确定」，每一次都是一个 500 券的幽灵记账（场景 V2 钉的就是它）。
+        `blind_done=False`（盲点没定论：框还在、或名字还没变）时反过来要靠调用点接着处理。
         """
-        blind = bool(expect_dialog and self.cfg.fast_confirm and not self.cfg.dry_run)
+        blind = bool(expect_dialog and (self.cfg.dialog_mode or "blind").lower() == "blind"
+                     and not self.cfg.dry_run)
+        blind_done = False
         self._tap(xy_img, tag)
+        confirmed = False
         if blind:
-            time.sleep(self.cfg.wait_dialog)
-            self._blind_confirm(tag)
-            time.sleep(self.cfg.wait_after_tap + self.cfg.wait_after_screen)
-            # 盲点路没有任何「等弹窗消失」的自然等待，闸门在这里必须有。
-            # 注意：真机实测弹窗要 ~2 s 才画出来，而 `wait_dialog` 默认 0.7 s → 盲点基本必然点空，
-            # 于是弹窗由下面的 `_handle_dialog` 补点一次、闸门也跟着跑第二遍（logs\fc2_live.txt
-            # 里 `sec` 5.19 s 就是这么来的）。结论：这个开关目前**不值得开**，见 README。
-            self._settle_guard_wait(tag, why="blind_confirm")
+            time.sleep(self.cfg.wait_dialog)      # 等确认框画出来（真机实测 0.8~2.6 s）
+            st, confirmed = self._blind_confirm(tag, before_rows=before_rows, row_index=row_index)
+            blind_done = confirmed
         else:
             time.sleep(self.cfg.wait_after_tap + self.cfg.wait_after_screen)
-        st = self._read(f"ev_{tag}")
+            st = self._read(f"ev_{tag}")
         tried = 0
         while (not self.cfg.dry_run and tried < self.cfg.read_retries
+               and not confirmed
                and not self._tap_progressed(st, before_sig, before_rows, row_index,
                                             blind=blind)):
             tried += 1
@@ -618,7 +745,6 @@ class Runner:
                      screen_kind=st["kind"])
             time.sleep(self.cfg.read_retry_delay)
             st = self._read(f"ev_{tag}_retry{tried}")
-        confirmed = False
         if st["kind"] == "dialog":
             st, confirmed = self._handle_dialog(st, tag)
         # 稳定性复读。必须放在弹窗处理**之后**：点 ↻ 读到的第一屏就是确认框（kind=dialog），
@@ -654,38 +780,25 @@ class Runner:
             self.log("settle", tag=tag, reads=extra, settled=settled, screen_kind=st["kind"],
                      rows_changed=self._rows_sig(st) != before_rows,
                      sig=str(self._sig(st))[:80])
-        # 「刷完等名字真的变了」。见 Config.settle_wait_change。
-        # 真机实测（`logs\land_probe3_out.txt`，2026-10-11 18:31）：点「确定」之后新词条
-        # **0.7 s 就落屏**，所以这一层只要兜住几秒就够；真正会骗人的是「确认框还没画出来」
-        # 那一段（0.8~2.6 s），由重读网（只认弹窗）负责。
-        # 判「还是旧名字」用**相似度**而不是原文相等：同一件装备的噪声写法相似度实测 ≥0.842、
-        # 真换件 ≤0.462（`ROW_SAME_MIN = 0.72` 落在中间），所以噪声不会让我们误以为「已经换好了」。
-        def still_old(s) -> bool:
-            if s["kind"] == "dialog":
-                return False
-            if row_index is None:
-                return self._rows_sig(s) == before_rows
-            now = self._row_raw(s, row_index)
-            old = self._row_raw_in(before_rows, row_index)
-            if now is None or old is None:
-                return False
-            return similarity(canon(now), canon(old)) >= ROW_SAME_MIN
-
+        # 「刷完等名字真的变了」。见 Config.settle_wait_change。判据与盲点回落共用
+        # `_still_old`：同一件装备的噪声写法相似度实测 ≥0.842、真换件 ≤0.462
+        # （`ROW_SAME_MIN = 0.72` 落在中间），所以噪声不会让我们误以为「已经换好了」。
         if (not self.cfg.dry_run and confirmed and settle_reads > 0 and before_rows is not None
-                and self.cfg.settle_wait_change > 0 and still_old(st)):
+                and self.cfg.settle_wait_change > 0 and self._still_old(st, before_rows, row_index)):
             t0, k = time.time(), 0
             cap = int(self.cfg.settle_wait_change / 0.1) + 4
             while time.time() - t0 < self.cfg.settle_wait_change and k < cap:
                 k += 1
                 time.sleep(max(self.cfg.settle_delay, 0.1))
                 st = self._read(f"ev_{tag}_waitchg{k}")
-                if not still_old(st):
+                if not self._still_old(st, before_rows, row_index):
                     break
             self.log("wait_change", tag=tag, slot=row_index, reads=k,
-                     waited=round(time.time() - t0, 2), changed=not still_old(st),
+                     waited=round(time.time() - t0, 2),
+                     changed=not self._still_old(st, before_rows, row_index),
                      screen_kind=st["kind"], raw=self._row_raw(st, row_index))
         return st, (confirmed or self._tap_progressed(st, before_sig, before_rows, row_index,
-                                                     blind=blind))
+                                                     blind=blind)), blind_done
 
     def _tap_until_change(self, xy_img, tag, before_sig, expect_dialog=False, before_rows=None,
                           row_index=None):
@@ -694,22 +807,28 @@ class Runner:
         扫描最多再试 profile 里的前 2 个偏移点：坐标已经过真机像素核对，
         扫描只是兜底；不设上限的话一次「点了没变化」会连点十几次，
         每次都要花刷新券（词条 500/次），预算会失控。
+
+        **盲点快路那一下有定论就不再补点**（`blind_done`）：那些补点（`confirm_dialog` /
+        `_sweep` 候选点）会再点一次「确定」，每一次都是一个 500 券的幽灵记账。
         """
         cands = self._sweep(xy_img) if self.cfg.tap_sweep else [xy_img]
-        st, changed = self._tap_wait_read(cands[0], tag, before_sig, expect_dialog=expect_dialog,
-                                          before_rows=before_rows, row_index=row_index)
-        if changed or self.cfg.dry_run:
+        st, changed, blind_done = self._tap_wait_read(cands[0], tag, before_sig,
+                                                      expect_dialog=expect_dialog,
+                                                      before_rows=before_rows, row_index=row_index)
+        if changed or self.cfg.dry_run or blind_done:
+            # 盲点那一下已有定论就到此为止：下面的 `confirm_dialog` 补点与 `_sweep` 候选点
+            # 都会**再点一次「确定」**，每一次都是一个 500 券的幽灵记账（场景 V2 钉的就是它）。
             return st, changed
         for cxy in self._confirm_targets(st):
             self.log("confirm_dialog", tag=tag, at=[round(v) for v in cxy])
-            st, changed = self._tap_wait_read(cxy, f"{tag}_ok", before_sig,
-                                              before_rows=before_rows, row_index=row_index)
+            st, changed, _ = self._tap_wait_read(cxy, f"{tag}_ok", before_sig,
+                                                 before_rows=before_rows, row_index=row_index)
             if changed:
                 return st, True
         for i, cxy in enumerate(cands[1:3], start=1):
-            st, changed = self._tap_wait_read(cxy, f"{tag}_sweep{i}", before_sig,
-                                              expect_dialog=expect_dialog,
-                                              before_rows=before_rows, row_index=row_index)
+            st, changed, _ = self._tap_wait_read(cxy, f"{tag}_sweep{i}", before_sig,
+                                                 expect_dialog=expect_dialog,
+                                                 before_rows=before_rows, row_index=row_index)
             if changed:
                 self.log("sweep_hit", tag=tag, tries=i + 1,
                          offset=[round(cxy[0] - xy_img[0]), round(cxy[1] - xy_img[1])])
@@ -781,7 +900,7 @@ class Runner:
                  device_size=list(self.device_size), work_dir=str(self.work_dir),
                  wait_after_tap=self.cfg.wait_after_tap, wait_after_screen=self.cfg.wait_after_screen,
                  read_retries=self.cfg.read_retries, read_retry_delay=self.cfg.read_retry_delay,
-                 capture=self.cfg.capture, fast_confirm=self.cfg.fast_confirm,
+                 capture=self.cfg.capture, dialog_mode=self.cfg.dialog_mode,
                  settle_reads=self.cfg.settle_reads, settle_delay=self.cfg.settle_delay,
                  settle_guard=self.cfg.settle_guard,
                  settle_wait_change=self.cfg.settle_wait_change,
@@ -1267,11 +1386,16 @@ def main(argv=None):
                     help=f"花券前再确认：连续读到几次「这一行不在池内」才允许点 ↻，"
                          f"默认 {Config.confirm_reads}（0 = 自动：实际走视频流取帧时取 2、"
                          f"gzip/原始帧路取 1；防流帧把小字读糊 → 白花 500 券）")
-    ap.add_argument("--fast-confirm", action="store_true",
-                    help="盲点快路：点 ↻ 后不读弹窗，直接按量好的坐标点「确定」（每次刷新 ≈4 秒）。"
-                         "默认关闭——这条路不看弹窗文字就确认，只在确认过弹窗形态时用")
+    ap.add_argument("--dialog-mode", choices=("blind", "read"), default=Config.dialog_mode,
+                    help=f"点完 ↻ 那个「是否刷新特殊条件」确认框怎么点，默认 {Config.dialog_mode}。"
+                         f"blind = 盲点快路：不读那一屏弹窗，等 --wait-dialog 后按量好的坐标直接点"
+                         f"「确定」（点空就交回读框那条路，只放行含「刷新」的框）；"
+                         f"read = 老行为：先读框、只放行含「刷新」的框再点它的热区")
+    ap.add_argument("--fast-confirm", dest="dialog_mode", action="store_const", const="blind",
+                    help="兼容旧写法，等价 --dialog-mode blind（现在本来就是默认，写了不改变行为）")
     ap.add_argument("--wait-dialog", type=float, default=Config.wait_dialog,
-                    help=f"盲点「确定」前等弹窗出现的秒数，默认 {Config.wait_dialog}")
+                    help=f"盲点「确定」前等确认框画出来的秒数，默认 {Config.wait_dialog}；"
+                         f"真机实测该框 0.8~2.6 s 才画出来，调小会点空、由读框那条路补点（会变慢）")
     ap.add_argument("--no-flush-pending", dest="flush_pending", action="store_false",
                     default=Config.flush_pending,
                     help="关掉「收尾补确认」：默认开会在一轮结束时多读一屏，"
@@ -1288,7 +1412,7 @@ def main(argv=None):
                  settle_guard=a.settle_guard,
                  settle_wait_change=a.settle_wait_change,
                  confirm_reads=a.confirm_reads,
-                 fast_confirm=a.fast_confirm, wait_dialog=a.wait_dialog,
+                 dialog_mode=a.dialog_mode, wait_dialog=a.wait_dialog,
                  flush_pending=a.flush_pending)
     if a.image:
         from .source import ImageSource
