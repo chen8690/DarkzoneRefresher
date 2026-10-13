@@ -1010,13 +1010,17 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
 
 ## 当前版本
 
-**v0.1.0**（首个公开版本，2026-10-11）。命令行可以直接查：
+**v0.2.0**（2026-10-13）。命令行可以直接查：
 
 ```
-python -m darkzone.runner --version     →  runner.py 0.1.0
+python -m darkzone.runner --version     →  runner.py 0.2.0
 ```
 
-版本号写死在 `darkzone/runner.py` 的 `__version__ = "0.1.0"`；历史版本与发布说明见
+这一版把「点刷新后确认弹窗」的处理换成了**盲点快路**（默认 `--dialog-mode blind`：不读那一屏、
+点完「确定」等满受理延迟再复核一屏），并据此把每发耗时从 ≈6.3 s 压到 **≈4.9 s**（2026-10-13
+真机 5 组配置对照，详见附录 A 与附录 B 事实 25/27）。
+
+版本号写死在 `darkzone/runner.py` 的 `__version__ = "0.2.0"`；历史版本与发布说明见
 仓库的 [Releases](https://github.com/chen8690/DarkzoneRefresher/releases)。
 
 ---

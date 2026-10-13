@@ -57,7 +57,7 @@ except Exception:                           # noqa: BLE001
         return False
 
 # 本工具版本号；发布 tag 用 v0.1.0，命令行 --version 读它
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # 默认 OCR 后端；设 DARKZONE_OCR=rapid 可以让整套（含离线套件）跑在 RapidOCR 下
 DEFAULT_OCR = os.environ.get("DARKZONE_OCR", "auto")
