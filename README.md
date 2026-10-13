@@ -93,6 +93,7 @@ python -m venv --system-site-packages .venv
 
 - 图形界面 `darkzone_app.py` 只用标准库 tkinter，**不用额外安装**：`python darkzone_app.py`。
 - 打包成 exe（PyInstaller）双击 `build_app.ps1`，产物在 `dist\DarkzoneRefresher\`（含 `启动.bat`）。
+  该脚本必须是 **UTF-8 with BOM**（见附录 A：无 BOM 会被 PowerShell 5.1 按 936 解码而解析失败）。
   注意：打包后 GUI 必须填「Python 解释器路径」（默认已填 3.1 那个），因为它靠真实 python 去跑
   `-m darkzone.runner`。
 
@@ -324,9 +325,15 @@ python -m venv --system-site-packages .venv
 | `samples\ocr_rows_rapid.json` | **固化的真实 OCR 行**（两张真机截图 + 合成图 × 两个引擎），换引擎回归用 |
 | `profiles\default.json` | 比例坐标（↻ 横向 0.910 等）+ 扫描偏移 |
 
-> 两个 `.ps1`（`win_ocr.ps1` / `win_ocr_worker.ps1`）由 Windows PowerShell 5.1 执行：5.1 读**无 BOM 的
-> UTF-8** 脚本时按系统代码页（936）解码，脚本里的中文容易变乱码甚至语法错。所以脚本内部只用英文
-> 提示、中文全放在 Python 侧；自己加 `.ps1` 时，含中文就存成 **UTF-8 with BOM**。
+> `.ps1` 由 Windows PowerShell 5.1 执行：5.1 读**无 BOM 的 UTF-8** 脚本时按系统代码页（936）解码，
+> 脚本里的中文会变乱码甚至直接语法错。`win_ocr.ps1` 因此写成**纯 ASCII**；`win_ocr_worker.ps1` /
+> `win_ocr_test.ps1` / `build_app.ps1` 都含中文，必须存成 **UTF-8 with BOM**。
+> **踩过的坑**：`build_app.ps1` 曾是无 BOM，`powershell -File build_app.ps1` 直接
+> `Unexpected token` / `字符串缺少终止符` 跑不到 PyInstaller（2026-10-13 修）；`darkzone\win_ocr_worker.ps1`
+> 也是无 BOM，靠「乱码恰好落在注释里」侥幸能跑，已一并补 BOM。
+> 校验一句话：`[System.Management.Automation.Language.Parser]::ParseFile($p,$null,[ref]$e); $e.Count`。
+> ⚠️ **`edit` 工具写回文件会去掉 BOM** —— 改过这几个 `.ps1` 之后一定要重新补 BOM（`New-Object
+> System.Text.UTF8Encoding($true)` + `WriteAllText`）再校验、再打包。
 
 ### 离线测试（不需要手机）
 
