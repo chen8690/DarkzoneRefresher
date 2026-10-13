@@ -167,6 +167,17 @@ class Config:
                                     # 历史数据（四发 live、每发 2 行）blind 的 charge.sec =
                                     # 6.64 / 6.17 / 6.34 / 5.63 / 5.92 / 7.16 / 5.37 / 6.0，
                                     # 对照 read 老路 8.04 / 6.64。
+    blind_settle: float = 1.8       # 盲点点完「确定」之后、去读结果之前额外等的秒数。
+                                    # 依据：2026-10-13 探针量出「点了确定 → 框消失」恒定约
+                                    # 1.8 s（23 次 1.54~2.06 s，均值 1.82 s、σ0.13 s），这是
+                                    # 游戏自己的受理延迟；1.8 s 一到，框没了、新词条也落屏了。
+                                    # 2026-10-13 的 5 次真机实测（10 发刷新）里，旧写法（只等
+                                    # 0.8 s 就读）**10 发全部**落到 `blind_unclear` → 再等一次
+                                    # `wait_change` → 再走 1~2 次 `read_retry`（每次 +0.7 s），
+                                    # 其中 6 发根本不需要再点「确定」（框早自己没了）。等满
+                                    # 1.8 s 再读，这一屏就该是「框没了 + 新词条已在」的最终态。
+                                    # 记账不变量不变：名字真变了才算这一下抽了（`_row_changed`，
+                                    # 噪声写法 ≥0.842 不算换件），预算用完仍是旧名 → 不记账。
     flush_pending: bool = True      # 收尾补确认（默认开）：一轮的**最后一次** ↻，确认框常在跑完之后
                                     # 才画出来。真机实测（logs\live_guard_slot2_1.txt 之后的启动
                                     # abort）：那轮结束后手机上还挂着「是否刷新特殊条件：SEK堡垒
@@ -606,17 +617,22 @@ class Runner:
     def _blind_confirm(self, tag, before_rows=None, row_index=None):
         """盲点「确定」：不读那一屏弹窗，直接点 profile 里量好的确认框坐标（真机 1592,1032）。
 
-        只有 `dialog_mode="blind"`（默认）才走这里。点完读一屏，三种结果各有处置：
+        只有 `dialog_mode="blind"`（默认）才走这里。点完等 `blind_settle`（默认 1.8 s = 探针量到的
+        「点完到框消失」受理延迟）再读一屏，三种结果各有处置：
 
-        - **框被点掉了、而且这一行的名字真的换了**：盲点命中，这一下的「抽签」已经发生 →
+        - **框没了，而且这一行的名字真的换了**：盲点命中，这一下的「抽签」已经发生 →
           `confirmed=True`，睡掉时间闸门再补读一屏，好让结果落到最新。
-        - **框被点掉了、名字还是旧的**：说不清是「点空了」还是「真抽了但新词条还没画出来」
-          （真机 `land_probe3` 量过：点完确定新词条要 ~0.7 s 才落屏；动画窗口更久）。
+        - **框没了、名字还是旧的**：说不清是「点空了」还是「真抽了但新词条还没画出来」。
           这一屏**绝不记账**，交给 `_wait_row_changed` 按 `settle_wait_change` 的预算继续读：
-          等的过程中读到弹窗（说明刚才那下没点掉框）就把框的处置权交回 `_handle_dialog`；
-          预算用完名字还是旧的 → 也返回 `confirmed=False`，当「没抽」处理，绝不当成刷新生效。
-        - **框还在**（读到了弹窗那一屏）：0.85 s 等得太早、点空了，**不重复点**，
+          等的过程中读到弹窗就把框的处置权交回 `_handle_dialog`；预算用完名字还是旧的 →
+          也返回 `confirmed=False`，当「没抽」处理，绝不当成刷新生效。
+        - **框还在**（等满受理延迟还读到弹窗那一屏）：那一下确实没点掉框，**不重复点**，
           返回 `confirmed=False` 交调用点，由 `_handle_dialog` 重读框文字、只放行含「刷新」的框再点。
+
+        为什么等 1.8 s 再读（2026-10-13 5 次真机实测，10 发刷新）：旧写法只等 0.8 s 就读，
+        **10 发全部**落到「框没了但名字还是旧的」→ 再等一次 `wait_change` → 再走 1~2 次
+        `read_retry`（每次 +0.7 s），10 发里有 6 发其实框早自己没了、根本不需要再点「确定」。
+        等满受理延迟再读，那一屏直接就是最终态，省掉这些回落读屏。
 
         为什么点空也没有额外风险：「确定」是照像素位置点的，位置不对最多白点一下空屏，
         游戏只会忽略它；**不是**按框里文字决定点不点，所以不存在「弹出别的框也被确认」。
@@ -629,11 +645,11 @@ class Runner:
         at = (frac[0] * self.mapper.iw, frac[1] * self.mapper.ih)
         self.log("fast_confirm", tag=tag, at=[round(v) for v in at], mode="blind")
         self._tap(at, f"{tag}_fastok")
-        time.sleep(self.cfg.wait_after_tap + self.cfg.wait_after_screen)
+        time.sleep(self.cfg.blind_settle)     # 等游戏受理（点完到框消失恒定约 1.8 s，见 Config.blind_settle）
         st2 = self._read(f"ev_{tag}_fastok")
         if st2["kind"] == "dialog":
             self.log("blind_missed", tag=tag, image=st2["image"],
-                     note="盲点后确认框还在：等太早了/点空了，交回读框那条路")
+                     note="盲点后等满受理延迟确认框还在：那一下确实没点掉框，交回读框那条路")
             return st2, False
         changed = (before_rows is None or row_index is None
                    or self._row_changed(st2, before_rows, row_index))
@@ -725,14 +741,16 @@ class Runner:
         没有这层的话「读早了」会被当成「点空了」→ 扫描再点一次 → 白花 500 券。
 
         `expect_dialog=True` 且 `dialog_mode="blind"`（默认）时走盲点快路：点 ↻ 后不等
-        读到弹窗文字，先 `wait_dialog` 让框画出来、直接点它的「确定」坐标，再读一屏
-        —— 一次刷新从 2 次读屏降到 1 次（省掉的那屏大约 2.4 s 里的一屏）。
+        读到弹窗文字，先 `wait_dialog` 让框画出来、直接点它的「确定」坐标，再等 `blind_settle`
+        （默认 1.8 s，探针量到的受理延迟）读一屏结果 —— 一次刷新从 2 次读屏降到 1 次
+        （省掉的那屏大约 2.4 s 里的一屏）。
 
         ⚠️ `wait_dialog` 的实测事实（2026-10-13 真机探针，23 次点击）：框**从不吞点击**，
         offset 从 −0.45 s 到 +2.50 s 全部生效；「框出现在屏幕上时点它会被吃掉」这个旧结论
-        是错的。点完到框消失恒定约 **1.8 s**（游戏受理延迟），所以盲点点完之后那 1.8 s 内
-        复核必然还读得到框、会落到 `blind_missed` → 交给读框那条路补点一次 —— 功能正确
-        （记账一次、行为安全），代价是那一次多读一屏。理由与数据见 `Config.wait_dialog`。
+        是错的。点完到框消失恒定约 **1.8 s**（游戏受理延迟），所以盲点点完之后必须等满
+        `blind_settle` 再读，否则读到的还是「框刚没了、新词条没落屏」的中间态
+        （2026-10-13 实测：只等 0.8 s 时 10 发刷新全部落到 `blind_unclear`）。
+        理由与数据见 `Config.wait_dialog` / `Config.blind_settle`。
 
         before_rows 给了且**实际取屏路**需要稳定性复读时（流路自动开，见 `eff_settle_reads`）：
         见 `_rows_sig` 的注释。
@@ -924,7 +942,8 @@ class Runner:
                  settle_guard=self.cfg.settle_guard,
                  settle_wait_change=self.cfg.settle_wait_change,
                  confirm_reads=self.cfg.confirm_reads, reads_auto="按实际取屏路（0=自动）",
-                 wait_dialog=self.cfg.wait_dialog, win_ocr_worker=win_ocr_worker_status())
+                 wait_dialog=self.cfg.wait_dialog, blind_settle=self.cfg.blind_settle,
+                 win_ocr_worker=win_ocr_worker_status())
         block = self.book.blocks[self.cfg.block_index]
         self.last = self._read("start")
         w, h = self.last["size"]
@@ -1418,6 +1437,11 @@ def main(argv=None):
                          f"而点击**从不被吞**——offset 从 −0.45 s 到 +2.50 s 共 23 次点击全部生效。"
                          f"所以这个值不影响成败，只影响盲点那一下落在动画的哪个阶段；"
                          f"0.85 在实测窗口内，除非换了设备/分辨率否则别动")
+    ap.add_argument("--blind-settle", type=float, default=Config.blind_settle,
+                    help=f"盲点点完「确定」后、去读结果之前额外等的秒数，默认 {Config.blind_settle}。"
+                         f"探针实测「点完到框消失」恒定约 1.8 s（23 次 1.54~2.06 s）—— 等满它，"
+                         f"读到的那一屏就是最终态；调小会读成「框刚没了、新词条没落屏」的中间态，"
+                         f"回落走读框路、每次多花 0.7~1.4 s")
     ap.add_argument("--no-flush-pending", dest="flush_pending", action="store_false",
                     default=Config.flush_pending,
                     help="关掉「收尾补确认」：默认开会在一轮结束时多读一屏，"
@@ -1435,6 +1459,7 @@ def main(argv=None):
                  settle_wait_change=a.settle_wait_change,
                  confirm_reads=a.confirm_reads,
                  dialog_mode=a.dialog_mode, wait_dialog=a.wait_dialog,
+                 blind_settle=a.blind_settle,
                  flush_pending=a.flush_pending)
     if a.image:
         from .source import ImageSource

@@ -349,17 +349,18 @@ check("N 没有走重读安全网（省的就是这次读屏）", '"kind": "read
 check("N 没碰派遣", phone_n.dispatch_tapped is False, str(phone_n.taps))
 
 # ------------------------- P 盲点快路的时序 + 点空回落：确认框「过一会儿才画出来」时会发生什么
-# 这一段是这次改动的主角。真机实测确认框 0.8~2.6 s 才画出来（假手机用 dialog_delay_reads 模拟）：
+# 这一段是这次改动的主角。真机实测确认框是渐显（假手机用 dialog_delay_reads 模拟）：
 # - `--wait-dialog 0`（= 不等）→ 盲点必然点空，但**不许出事**：交回读框那条路补点一次「确定」，
 #   刷新照样生效、券照样记、依旧不许多点一次 ↻；
-# - 盲点生效那条路省掉的正是「读那一屏弹窗」，所以日志里**一次 `auto_confirm` 都不该有**。
+# - 这里把 `blind_settle=0`，专门量「盲点那一下 + 读框回落」的纯时序（默认 1.8 s 的受理等待
+#   会让这一发多花 1.8 s，那是 `--blind-settle` 的事，见盲点默认路的场景 N/R3）。
 out("\n=== P 盲点快路时序：确认框 2 屏后才画出来 ===")
 phone_p = FakePhone(boss_queue=("伯纳德",),
                     row_queues={1: ["M4A1突击步枪", POOL1], 2: [POOL2], 3: [POOL3]},
                     screen="detail", work_dir=WORK / "P", dialog_delay_reads=2)
 _t0 = time.time()
 res_p, log_p = run(phone_p, dry_run=False, max_refresh_per_row=1, detail_only=True,
-                   wait_dialog=0.0, tap_sweep=False)
+                   wait_dialog=0.0, blind_settle=0.0, tap_sweep=False)
 _confirm_wait = time.time() - _t0
 out(json.dumps({k: v for k, v in res_p.items() if k != "events"}, ensure_ascii=False, indent=2))
 check("P 走了盲点路", "fast_confirm" in log_p, log_p[-300:])
@@ -520,6 +521,9 @@ check("R 没有点派遣", phone_r.dispatch_tapped is False)
 
 # 对照组：闸门关掉（settle_guard=0）→ 旧帧被骗进结论，是**最坏**的那种错：
 # 工具报「这一行在池内 / 可以派遣」，而真机上那一行是池外的 M4A1。
+# 2026-10-13：这一组显式用 `dialog_mode="read"`。盲点默认路的 `blind_settle=1.8` 会等满受理延迟
+# 再读结果，正好读掉动画窗口 —— 于是它**不会**被骗（同一台假手机上刷了 2 次、收在池内那件），
+# 这条对照钉的病随之不成立；要留的是「闸门关掉会出事」这个证据，所以把它钉在 read 老路上。
 out("\n=== R2 对照：settle_guard=0 时同一台假手机会把旧帧当结果（假 ready）===")
 phone_r2 = FakePhone(boss_queue=("伯纳德",),
                      row_queues={1: [POOL1, "M4A1突击步枪", POOL1], 2: [POOL2], 3: [POOL3]},
@@ -527,7 +531,8 @@ phone_r2 = FakePhone(boss_queue=("伯纳德",),
                      flaky_rows={1: ("AIJG突击步枪", 3)},
                      anim_seconds=2.0)
 res_r2, log_r2 = run(phone_r2, dry_run=False, max_refresh_per_row=10, detail_only=True,
-                     settle_reads=2, settle_delay=0.0, confirm_reads=2, settle_guard=0.0)
+                     settle_reads=2, settle_delay=0.0, confirm_reads=2, settle_guard=0.0,
+                     dialog_mode="read")
 rows_r2 = {r["slot"]: r for r in res_r2.get("rows", [])}
 check("R2 工具以为槽1=池内、只刷 1 次（旧帧 AUG 骗过了它）",
       rows_r2.get(1, {}).get("item") == POOL1 and rows_r2[1]["refreshes"] == 1,
@@ -755,6 +760,38 @@ check("R3 只花 1 次 = 500 券", (res_r3.get("cost") or {}).get("spent") == 50
 check("R3 没有走扫描兜底（坐标没歪，白点一次不该触发扫描）", "sweep_hit" not in log_r3,
       log_r3[-300:])
 check("R3 没有点派遣", phone_r3.dispatch_tapped is False, str(phone_r3.taps))
+
+# ------------------------- R4 盲点的受理等待：等满 `blind_settle` 再读结果，一屏落到最终态
+# 2026-10-13 真机 5 次刷新（10 发）实测：只等 0.8 s 就读的那版**每一发**都落到
+# `blind_unclear` → 再等一次 `wait_change` → 再走 1~2 次 `read_retry`（每次 +0.7 s），
+# 10 发里 6 发其实框早自己没了、根本不需要补点「确定」。探针量到「点完确定 → 框消失」恒定
+# 约 1.8 s（游戏受理延迟）：等满它再读，那一屏直接是最终态。
+# 这里用 `anim_seconds=0.8` 复刻：0.85 s 复核那时框已经点掉、新词条还在画（顶栏已扣券），
+# 1.8 s 的受理等待之后词条已换 → 盲点命中，**一次 `read_retry` 都不该有**。
+# `dialog_delay_reads=0`：确认框在点 ↻ 那一瞬间就画出来（盲点那一下才有可能点中它）。
+# 「框过几帧才画出来」的时序由场景 S 钉（它会读框、走回落确认），不在这里重复。
+out("\n=== R4 盲点受理等待：等满 blind_settle 再读，一屏就是最终态（无 read_retry）===")
+phone_r4 = FakePhone(boss_queue=("伯纳德",),
+                     row_queues={1: [POOL1], 2: ["M4A1突击步枪", POOL2], 3: [POOL3]},
+                     screen="detail", work_dir=WORK / "R4",
+                     dialog_delay_reads=0, anim_seconds=0.8)
+res_r4, log_r4 = run(phone_r4, dry_run=False, max_refresh_per_row=3, detail_only=True,
+                     settle_reads=2, settle_delay=0.05, settle_guard=0.0, tap_sweep=False)
+rows_r4 = {r["slot"]: r for r in res_r4.get("rows", [])}
+check("R4 走了盲点路", "fast_confirm" in log_r4, log_r4[-300:])
+check("R4 盲点命中（没有 blind_unclear / blind_missed）",
+      '"kind": "blind_unclear"' not in log_r4 and '"kind": "blind_missed"' not in log_r4,
+      log_r4[-500:])
+check("R4 一次 read_retry 都没走（受理等待省掉的就是这几次读屏）",
+      '"kind": "read_retry"' not in log_r4, log_r4[-500:])
+check("R4 槽2 判成池内、只刷 1 次", rows_r4.get(2, {}).get("status") == "ok"
+      and rows_r4[2].get("item") == POOL2 and rows_r4[2]["refreshes"] == 1, str(rows_r4.get(2)))
+check("R4 只花 1 次 = 500 券", (res_r4.get("cost") or {}).get("spent") == 500,
+      str(res_r4.get("cost")))
+check("R4 确认框被点掉、没有卡住（只点了 1 次「确定」）",
+      phone_r4.dialog is None and phone_r4.dialog_count == 1,
+      f"dialog={phone_r4.dialog} count={phone_r4.dialog_count}")
+check("R4 没有点派遣", phone_r4.dispatch_tapped is False, str(phone_r4.taps))
 
 # 2026-10-11 18:30 的定向实测（logs\_land_probe.py / _land_probe2.py / _land_probe3.py，
 # 结果在 logs\land_probe*_out.txt）把「25.3% 刷完名字没变」的时序彻底量清楚了：

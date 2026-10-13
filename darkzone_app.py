@@ -86,6 +86,7 @@ def load_config() -> dict:
         "limit": 40,
         "dialog_mode": "blind",
         "wait_dialog": 0.85,
+        "blind_settle": 1.8,
         "adb_path": "adb",
         "ffmpeg_path": "ffmpeg",
         "python_path": DSH_PYTHON,
@@ -108,6 +109,11 @@ def load_config() -> dict:
         defaults["wait_dialog"] = min(5.0, max(0.0, float(defaults.get("wait_dialog", 0.85))))
     except (TypeError, ValueError):
         defaults["wait_dialog"] = 0.85
+    # 盲点受理等待：点完「确定」到框消失恒定约 1.8 s（真机探针），调小会读成中间态
+    try:
+        defaults["blind_settle"] = min(5.0, max(0.0, float(defaults.get("blind_settle", 1.8))))
+    except (TypeError, ValueError):
+        defaults["blind_settle"] = 1.8
     return defaults
 
 
@@ -216,6 +222,12 @@ class DarkzoneApp(tk.Tk):
         ttk.Spinbox(row1, textvariable=self.wait_dialog_var, from_=0.0, to=5.0,
                     increment=0.05, width=5).pack(side=tk.LEFT, padx=4)
 
+        # 盲点点完「确定」后的受理等待：1.8 s = 真机探针量到的「点完到框消失」
+        ttk.Label(row1, text="  受理等(s):").pack(side=tk.LEFT)
+        self.blind_settle_var = tk.DoubleVar(value=self.cfg["blind_settle"])
+        ttk.Spinbox(row1, textvariable=self.blind_settle_var, from_=0.0, to=5.0,
+                    increment=0.1, width=5).pack(side=tk.LEFT, padx=4)
+
         self.dry_first_var = tk.BooleanVar(value=bool(self.cfg.get("dry_run_first", True)))
 
         ttk.Checkbutton(row1, text="安全预演优先", variable=self.dry_first_var).pack(
@@ -312,6 +324,7 @@ class DarkzoneApp(tk.Tk):
             limit=self.limit_var.get(),
             dialog_mode=self.dialog_mode_var.get(),
             wait_dialog=float(self.wait_dialog_var.get()),
+            blind_settle=float(self.blind_settle_var.get()),
             dry_run_first=bool(self.dry_first_var.get()),
             adb_path=self.adb_var.get(),
             ffmpeg_path=self.ffmpeg_var.get(),
@@ -344,6 +357,7 @@ class DarkzoneApp(tk.Tk):
             "--limit", str(self.limit_var.get()),
             "--dialog-mode", self.dialog_mode_var.get(),
             "--wait-dialog", str(float(self.wait_dialog_var.get())),
+            "--blind-settle", str(float(self.blind_settle_var.get())),
         ]
         if mode == "live":
             cmd.append("--live")
