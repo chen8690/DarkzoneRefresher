@@ -149,11 +149,16 @@ class Config:
                                     #   "read"：老行为——先读屏、只放行含「刷新」的框再点它的热区；
                                     #     只读一屏、且拒绝任何非刷新弹窗（对照/保守用）。
     wait_dialog: float = 0.85       # 盲点「确定」前等确认框画出来的秒数。
-                                    # 真机实测该框 0.8~2.6 s 才画出来，所以这个值决定盲点中不中：
-                                    # 旧默认 0.7 s 偏小 → 盲点常点空、由 `_handle_dialog` 补点一次、
-                                    # 闸门跟着跑两遍，charge.sec 反而 5.19 s（比默认路还慢）。
-                                    # 0.85 s 是「闸门 0.9 s 已经替我们把动画窗口睡过去」之后的取值：
-                                    # 盲点前累计等 0.25+0.55+0.85 = 1.65 s。实机想更稳就调 `--wait-dialog`。
+                                    # 2026-10-13 真机实测（四次 live、每发 2 行）：这个框在点 ↻ 之后
+                                    # 大约 **1.0~1.4 s** 才画出来，而且**框已经画出来之后点它没反应**
+                                    # （游戏在动画期间吃掉点击）——`--wait-dialog 1.0/1.3/1.9` 三发
+                                    # 全部落到 `blind_missed`（截图存证：re-OCR `ev_*_fastok_*.jpg`
+                                    # 都判成 dialog），反而是 0.85 那一发两张 fastok 都是 detail、
+                                    # 盲点那一下点得进去。所以这个值**不能朝大调**，0.85 是实测最好：
+                                    # 它落在「框还没出现」的窗口里，晚了就白点。三次 blind（0.85/1.0）
+                                    # 的 charge.sec = 6.64 / 6.17 / 6.34 / 5.63 / 5.37 / 6.0，对照
+                                    # read 老路 8.04 / 6.64。
+                                    # 调小会点空（旧默认 0.7 → charge.sec 反而 5.19 s，比默认路还慢）。
     flush_pending: bool = True      # 收尾补确认（默认开）：一轮的**最后一次** ↻，确认框常在跑完之后
                                     # 才画出来。真机实测（logs\live_guard_slot2_1.txt 之后的启动
                                     # abort）：那轮结束后手机上还挂着「是否刷新特殊条件：SEK堡垒
@@ -708,12 +713,17 @@ class Runner:
         等待刻意压短（默认 0.25+0.55 s）以加速，所以这里加了一层**重读**安全网：
         还没「真的生效」时（判据见 `_tap_progressed`：刷某一行**只认读到弹窗**，其它点击看整屏签名）
         先多读 `read_retries` 次（每读一次就多等 `read_retry_delay`，默认共 5.6 s ——
-        真机确认框实测要 0.8~2.6 s 才画出来，这段就是等它）。
+        真机确认框实测要 1.0~1.4 s 才画出来，这段就是等它）。
         没有这层的话「读早了」会被当成「点空了」→ 扫描再点一次 → 白花 500 券。
 
         `expect_dialog=True` 且 `dialog_mode="blind"`（默认）时走盲点快路：点 ↻ 后不等
         读到弹窗文字，先 `wait_dialog` 让框画出来、直接点它的「确定」坐标，再读一屏
         —— 一次刷新从 2 次读屏降到 1 次（省掉的那屏大约 2.4 s 里的一屏）。
+
+        ⚠️ `wait_dialog` **只能往小调、不能往大调**：真机实测（2026-10-13 四发 live）框在
+        点 ↻ 后约 1.0~1.4 s 才画出来，且**框已经在屏幕上时点它会被吃掉** —— 0.85 那两发
+        的 `ev_*_fastok*.jpg` 重新 OCR 全是 detail（点得进去），1.0/1.3/1.9 六发全是 dialog
+        且都落到 `blind_missed`。理由与数据见 `Config.wait_dialog` 的注释。
 
         before_rows 给了且**实际取屏路**需要稳定性复读时（流路自动开，见 `eff_settle_reads`）：
         见 `_rows_sig` 的注释。
@@ -729,7 +739,7 @@ class Runner:
         self._tap(xy_img, tag)
         confirmed = False
         if blind:
-            time.sleep(self.cfg.wait_dialog)      # 等确认框画出来（真机实测 0.8~2.6 s）
+            time.sleep(self.cfg.wait_dialog)      # 等确认框画出来（真机实测 1.0~1.4 s）
             st, confirmed = self._blind_confirm(tag, before_rows=before_rows, row_index=row_index)
             blind_done = confirmed
         else:
@@ -1394,8 +1404,11 @@ def main(argv=None):
     ap.add_argument("--fast-confirm", dest="dialog_mode", action="store_const", const="blind",
                     help="兼容旧写法，等价 --dialog-mode blind（现在本来就是默认，写了不改变行为）")
     ap.add_argument("--wait-dialog", type=float, default=Config.wait_dialog,
-                    help=f"盲点「确定」前等确认框画出来的秒数，默认 {Config.wait_dialog}；"
-                         f"真机实测该框 0.8~2.6 s 才画出来，调小会点空、由读框那条路补点（会变慢）")
+                    help=f"盲点「确定」前等确认框画出来的秒数，默认 {Config.wait_dialog}。"
+                         f"两头都不好：调小会点空（等框还没画出来，交给读框那条路补点，变慢）；"
+                         f"调大更糟——真机上这个框约 1.0~1.4 s 才画出来，而**框已经在屏幕上时"
+                         f"点它没反应**（动画期间吃点击），实测 1.0/1.3/1.9 三发全落到「框还在」的"
+                         f"回落路。0.85 是实测最好，除非你换了设备/分辨率，否则别动")
     ap.add_argument("--no-flush-pending", dest="flush_pending", action="store_false",
                     default=Config.flush_pending,
                     help="关掉「收尾补确认」：默认开会在一轮结束时多读一屏，"
