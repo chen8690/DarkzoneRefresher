@@ -167,15 +167,17 @@ class Config:
                                     # 历史数据（四发 live、每发 2 行）blind 的 charge.sec =
                                     # 6.64 / 6.17 / 6.34 / 5.63 / 5.92 / 7.16 / 5.37 / 6.0，
                                     # 对照 read 老路 8.04 / 6.64。
-    blind_settle: float = 1.8       # 盲点点完「确定」之后、去读结果之前额外等的秒数。
-                                    # 依据：2026-10-13 探针量出「点了确定 → 框消失」恒定约
-                                    # 1.8 s（23 次 1.54~2.06 s，均值 1.82 s、σ0.13 s），这是
-                                    # 游戏自己的受理延迟；1.8 s 一到，框没了、新词条也落屏了。
-                                    # 2026-10-13 的 5 次真机实测（10 发刷新）里，旧写法（只等
-                                    # 0.8 s 就读）**10 发全部**落到 `blind_unclear` → 再等一次
-                                    # `wait_change` → 再走 1~2 次 `read_retry`（每次 +0.7 s），
-                                    # 其中 6 发根本不需要再点「确定」（框早自己没了）。等满
-                                    # 1.8 s 再读，这一屏就该是「框没了 + 新词条已在」的最终态。
+    blind_settle: float = 2.5       # 盲点点完「确定」之后、去读结果之前额外等的秒数。
+                                    # 依据（2026-10-13 真机实测，`--limit` 各发若干，共 34 发）：
+                                    # 「点了确定 → 框消失」约 1.8 s（23 次 1.54~2.06 s、均值
+                                    # 1.82 s、σ0.13 s），**但那是「受理完成」的时刻，不是「可以
+                                    # 再点」的时刻**：0.85 s 时框还在动画里，那一下会被游戏吃掉
+                                    # （blind_unclear ×10、read_retry ×16）；1.7 / 1.8 / 2.0 s
+                                    # 复核那一屏仍能看到框（blind_missed ×4 / ×10 / ×2，回落
+                                    # 再点一次 + read_retry）；2.2 s 基本干净（blind_unclear ×2、
+                                    # read_retry 0）；**2.5 s 完全干净**（12 发：blind_missed 0、
+                                    # blind_unclear 1、read_retry 0、auto_confirm 0、sweep 0）。
+                                    # 再等更久没有意义（框早没了，多等就是白等）。
                                     # 记账不变量不变：名字真变了才算这一下抽了（`_row_changed`，
                                     # 噪声写法 ≥0.842 不算换件），预算用完仍是旧名 → 不记账。
     flush_pending: bool = True      # 收尾补确认（默认开）：一轮的**最后一次** ↻，确认框常在跑完之后
@@ -617,8 +619,8 @@ class Runner:
     def _blind_confirm(self, tag, before_rows=None, row_index=None):
         """盲点「确定」：不读那一屏弹窗，直接点 profile 里量好的确认框坐标（真机 1592,1032）。
 
-        只有 `dialog_mode="blind"`（默认）才走这里。点完等 `blind_settle`（默认 1.8 s = 探针量到的
-        「点完到框消失」受理延迟）再读一屏，三种结果各有处置：
+        只有 `dialog_mode="blind"`（默认）才走这里。点完等 `blind_settle`（默认 2.5 s = 实测到的
+        「框已被受理、复核那一屏就是最终态」的时刻，见 `Config.blind_settle`）再读一屏，三种结果各有处置：
 
         - **框没了，而且这一行的名字真的换了**：盲点命中，这一下的「抽签」已经发生 →
           `confirmed=True`，睡掉时间闸门再补读一屏，好让结果落到最新。
@@ -1439,9 +1441,9 @@ def main(argv=None):
                          f"0.85 在实测窗口内，除非换了设备/分辨率否则别动")
     ap.add_argument("--blind-settle", type=float, default=Config.blind_settle,
                     help=f"盲点点完「确定」后、去读结果之前额外等的秒数，默认 {Config.blind_settle}。"
-                         f"探针实测「点完到框消失」恒定约 1.8 s（23 次 1.54~2.06 s）—— 等满它，"
-                         f"读到的那一屏就是最终态；调小会读成「框刚没了、新词条没落屏」的中间态，"
-                         f"回落走读框路、每次多花 0.7~1.4 s")
+                         f"真机实测：1.8 s 只是「受理完成」的时刻，那时框还可能挂在屏上；"
+                         f"0.85 s 更糟（框还在动画里，点击会被吃掉）。**2.5 s 实测完全干净**"
+                         f"（12 发 blind_missed=0 / read_retry=0），除非换设备/分辨率否则别动")
     ap.add_argument("--no-flush-pending", dest="flush_pending", action="store_false",
                     default=Config.flush_pending,
                     help="关掉「收尾补确认」：默认开会在一轮结束时多读一屏，"

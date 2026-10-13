@@ -86,7 +86,7 @@ def load_config() -> dict:
         "limit": 40,
         "dialog_mode": "blind",
         "wait_dialog": 0.85,
-        "blind_settle": 1.8,
+        "blind_settle": 2.5,
         "adb_path": "adb",
         "ffmpeg_path": "ffmpeg",
         "python_path": DSH_PYTHON,
@@ -109,11 +109,11 @@ def load_config() -> dict:
         defaults["wait_dialog"] = min(5.0, max(0.0, float(defaults.get("wait_dialog", 0.85))))
     except (TypeError, ValueError):
         defaults["wait_dialog"] = 0.85
-    # 盲点受理等待：点完「确定」到框消失恒定约 1.8 s（真机探针），调小会读成中间态
+    # 盲点受理等待：2.5 s 实测完全干净（blind_missed=0 / read_retry=0），1.8 s 只到「受理完成」
     try:
-        defaults["blind_settle"] = min(5.0, max(0.0, float(defaults.get("blind_settle", 1.8))))
+        defaults["blind_settle"] = min(5.0, max(0.0, float(defaults.get("blind_settle", 2.5))))
     except (TypeError, ValueError):
-        defaults["blind_settle"] = 1.8
+        defaults["blind_settle"] = 2.5
     return defaults
 
 
