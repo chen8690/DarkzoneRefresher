@@ -481,8 +481,8 @@ check("Q 实际走 gzip → 不额外读（每帧 1.4 s，读多了纯浪费）"
       (r_q.eff_settle_reads(), r_q.eff_confirm_reads()) == (0, 1),
       f"{r_q.eff_settle_reads()}/{r_q.eff_confirm_reads()}")
 phone_q.last_chain = "stream"
-check("Q 实际走视频流 → 自动 settle=2 / confirm=2（读一帧 0.01 s）",
-      (r_q.eff_settle_reads(), r_q.eff_confirm_reads()) == (2, 2),
+check("Q 实际走视频流 → 自动 settle=1 / confirm=2（盲点路已等满受理窗，1 次复读就够）",
+      (r_q.eff_settle_reads(), r_q.eff_confirm_reads()) == (1, 2),
       f"{r_q.eff_settle_reads()}/{r_q.eff_confirm_reads()}")
 r_q2 = Runner(book, phone_q, Config(dry_run=True, log_dir=str(WORK / "logs"),
                                     work_dir=str(WORK / "logs"),
@@ -765,8 +765,9 @@ check("R3 没有点派遣", phone_r3.dispatch_tapped is False, str(phone_r3.taps
 # 2026-10-13 真机 5 次刷新（10 发）实测：只等 0.8 s 就读的那版**每一发**都落到
 # `blind_unclear` → 再等一次 `wait_change` → 再走 1~2 次 `read_retry`（每次 +0.7 s），
 # 10 发里 6 发其实框早自己没了、根本不需要补点「确定」。真机续测（2026-10-13，共 34 发）：
-# 1.7/1.8/2.0 s 复核那一屏仍可能看到框（blind_missed），2.2 s 接近干净，**2.5 s 完全干净**
-# （12 发 blind_missed=0 / read_retry=0），故 `Config.blind_settle` 默认 2.5。
+# 1.7/1.8/2.0 s 复核那一屏仍可能看到框（blind_missed），2.2 s 接近干净，2.5 s 完全干净
+# （12 发 blind_missed=0 / read_retry=0）。2026-10-13 晚又按「最短时间」调过默认：
+# `Config.blind_settle` 取 **2.2**（与自动档 `settle_reads=1` 配对实测中位 4.9 s/发，见事实 27）。
 # 这里用 `anim_seconds=0.8` 复刻：0.85 s 复核那时框已经点掉、新词条还在画（顶栏已扣券），
 # 2.5 s 的受理等待之后词条已换 → 盲点命中，**一次 `read_retry` 都不该有**。
 # `dialog_delay_reads=0`：确认框在点 ↻ 那一瞬间就画出来（盲点那一下才有可能点中它）。

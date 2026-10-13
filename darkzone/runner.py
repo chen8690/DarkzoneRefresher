@@ -103,7 +103,13 @@ class Config:
     settle_reads: int = 0           # 画面变了之后，再连读几次确认「签名稳定」才算数：
                                     # 视频流取帧有 ~0.35 s 延迟，不设这层会读到「券已扣、
                                     # 词条还是旧的」动画中间帧 → 误判点空了 → 再点一次 ↻ 白花 500 券。
-                                    # 0 = 自动（实际走流路取 2 次，gzip/raw/png 路不额外读）。
+                                    # 0 = 自动（实际走流路取 1 次，gzip/raw/png 路不额外读）。
+                                    # 为什么自动档是 1 而不是 2：盲点默认路在点完「确定」后已经
+                                    # 等满 `blind_settle`（默认 2.5 s），那一屏就是最终态，第 2 次
+                                    # 复读基本白等 ≈0.6 s/发（2026-10-13 真机 5 组配置对照：
+                                    # settle-reads 1 + blind-settle 2.2 → 中位 4.9 s；
+                                    # settle-reads 2 → 中位 6.3 s；settle-reads 0 → 5.3 s 且
+                                    # 连时间闸门一起关掉）。要双保险就显式 `--settle-reads 2`。
     settle_delay: float = 0.15      # 每次稳定性复读之间等多久
     settle_guard: float = 0.9       # 点完「确定」之后、**信任任何一帧之前**至少等这么久。
                                     # 为什么必须等：真机顺序是「顶栏先扣券 → 新词条过一会儿才画
@@ -167,16 +173,19 @@ class Config:
                                     # 历史数据（四发 live、每发 2 行）blind 的 charge.sec =
                                     # 6.64 / 6.17 / 6.34 / 5.63 / 5.92 / 7.16 / 5.37 / 6.0，
                                     # 对照 read 老路 8.04 / 6.64。
-    blind_settle: float = 2.5       # 盲点点完「确定」之后、去读结果之前额外等的秒数。
-                                    # 依据（2026-10-13 真机实测，`--limit` 各发若干，共 34 发）：
+    blind_settle: float = 2.2       # 盲点点完「确定」之后、去读结果之前额外等的秒数。
+                                    # 依据（2026-10-13 真机实测，`--limit` 各发若干，共 40+ 发）：
                                     # 「点了确定 → 框消失」约 1.8 s（23 次 1.54~2.06 s、均值
                                     # 1.82 s、σ0.13 s），**但那是「受理完成」的时刻，不是「可以
                                     # 再点」的时刻**：0.85 s 时框还在动画里，那一下会被游戏吃掉
                                     # （blind_unclear ×10、read_retry ×16）；1.7 / 1.8 / 2.0 s
                                     # 复核那一屏仍能看到框（blind_missed ×4 / ×10 / ×2，回落
-                                    # 再点一次 + read_retry）；2.2 s 基本干净（blind_unclear ×2、
-                                    # read_retry 0）；**2.5 s 完全干净**（12 发：blind_missed 0、
-                                    # blind_unclear 1、read_retry 0、auto_confirm 0、sweep 0）。
+                                    # 再点一次 + read_retry）；2.2 s 基本干净（第一轮 6 发：
+                                    # blind_unclear ×2、read_retry 0）；**2.5 s 完全干净**
+                                    # （12 发：blind_missed 0、blind_unclear 1、read_retry 0）。
+                                    # 默认取 2.2 是因为与 `settle_reads=1` 配对实测中位 **4.9 s**
+                                    # （6 发 4.86~5.30，见事实 27）；要更保守就显式 `--blind-settle 2.5`
+                                    # （每发多 0.3 s，但把「复核还能看到框」的概率再压一档）。
                                     # 再等更久没有意义（框早没了，多等就是白等）。
                                     # 记账不变量不变：名字真变了才算这一下抽了（`_row_changed`，
                                     # 噪声写法 ≥0.842 不算换件），预算用完仍是旧名 → 不记账。
@@ -272,11 +281,13 @@ class Runner:
 
         为什么按实际路而不是按 `--capture`：`auto` 现在优先视频流，但没 ffmpeg 的机器
         （或流起不来）会自动退到 gzip——那时读一帧 1.4 秒，再复读几帧纯属浪费；
-        流路读一帧 0.01 秒，多读几乎免费，所以只有真在流上才自动开。
+        流路读一帧 0.01 秒、OCR 复用常驻 worker 只要 0.09~0.21 秒，所以只有真在流上才自动开。
+        为什么流路自动值取 1：盲点默认路已等满 `blind_settle`，那一屏就是最终态（2026-10-13 实测
+        settle 1 次 → 中位 4.9 s/发，2 次 → 6.3 s/发，0 次 → 5.3 s 且闸门也一起关）。
         """
         if self.cfg.settle_reads > 0:
             return int(self.cfg.settle_reads)
-        return 2 if self._on_stream() else 0
+        return 1 if self._on_stream() else 0
 
     def eff_confirm_reads(self) -> int:
         """花券前再确认几次：同上，显式配置优先；没配时只有流路自动取 2（见 Config.confirm_reads）。"""
