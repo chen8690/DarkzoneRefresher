@@ -527,7 +527,7 @@ logs\_stream_fn_probe.py    稳态流帧的假阴性率：同一条流连读 15 
   - 框没了、名字还是旧的（动画窗口里新词条要 ~0.7 s 才落屏）→ 记 `blind_unclear`、**这一屏绝不记账**，
     按 `--settle-wait-change` 的预算继续读到名字真的变了才收（等出弹窗就同样回落到 `_handle_dialog`）；
 * 「派遣」禁点区照旧生效（(1592,1032) 离派遣按钮 1134px，不在禁点区里）；
-* **`--wait-dialog` 不影响成败**（2026-10-13 真机探针 `logs\_dialog_timing_probe.py`，
+* **`--wait-dialog` 不影响成败**（2026-10-13 真机探针 `tools\dialog_timing_probe.py`，
   15 fps 连拍 + 点击时刻按「发出/返回中点」量，因为它会阻塞 0.1~0.2 s）：这个框是**渐显**
   （点 ↻ 后约 0.7~1.5 s 开始有像素变化，明显跳变 1.5~1.8 s），但**点击从不被吞** ——
   offset（相对框出现）从 **−0.45 s 扫到 +2.50 s**，再加一组「点 ↻ 后固定等 0.85 / 1.30 /
@@ -669,7 +669,7 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
   比普通路更慢。**2026-10-13 的处置**：把这条路改成默认（`--dialog-mode blind`）、`wait_dialog` 提到
   **0.85**，并给盲点后那一屏加了「框还在 → 交回 `_handle_dialog` / 名字没变 → 按 `settle_wait_change`
   等它画出来，这一屏绝不记账」的复核与回落 —— 点空不再是「补点第二次确定」的赌，而是干净地退回读框路。
-* （**2026-10-13 探针修正，`logs\_dialog_timing_probe.py`**）上面这条「盲点经常点空」的因果也说错了：
+* （**2026-10-13 探针修正，`tools\dialog_timing_probe.py`**）上面这条「盲点经常点空」的因果也说错了：
   框**从不吞点击**（offset −0.45 s ~ +2.50 s、共 23 次点击全部生效），是**点完到框消失恒定 ≈1.8 s**
   （游戏受理延迟）。所以 2026-10-11 那发盲点的「确定」其实也点进去了，只是复核在 1.8 s 窗口内
   必然还看到框、于是读框路又补点了一次「确定」——多付一屏、并不白花券（券按行记账）。
@@ -892,7 +892,7 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
       （窗口自动对齐那次点击，`darkzone\fake_screens.py`）。
       七套件复跑全 `exit 0` / `FAIL 0`（`logs\suite_W_*.txt`，`test_runner_offline` **58.8 s**）。
       第 19/21 条里「弹窗要到下一轮才确认」的旧模型已被重读网取代。
-23. **确认框的点击到底生不生效、要等多久**（2026-10-13 真机探针，`logs\_dialog_timing_probe.py`）：
+23. **确认框的点击到底生不生效、要等多久**（2026-10-13 真机探针，`tools\dialog_timing_probe.py`）：
    之前的结论是「框已经在屏幕上时点它会被游戏吃掉」（依据：`--wait-dialog 1.0/1.3/1.9` 三发复核
    那一屏重新 OCR 都判成 dialog，而 0.85 那发是 detail）。探针把这件事直接量了一遍 ——
    15 fps 视频流连拍 + 全屏像素差，点击时刻按「`adb tap` 发出/返回的中点」算（`adb tap` 是阻塞的，
@@ -908,7 +908,7 @@ ffmpeg -f h264 -i - -vf fps=4 -q:v 5 -f image2 -update 1 -y logs\stream_frame.jp
   **结论**：`blind_missed` 不是点丢了，而是「点完之后 1.8 s 内复核必然还看得见框」；
   这一路功能仍然正确（只记 1 笔账、回落给读框路），代价是那次多读一屏。
   `--wait-dialog` 因此**只影响盲点落在渐显动画的哪个阶段，不影响成败**；0.85 仍在实测窗口内。
-  探针用法：手机停在详情页，`python logs\_dialog_timing_probe.py --trials 6 --fps 15`
+  探针用法：手机停在详情页，`python tools\dialog_timing_probe.py --trials 6 --fps 15`
   （`--anchor tap` 复刻「固定等待」那一组，`--slot N` 指定刷哪一行；它只点 ↻ 和「确定」，**不碰派遣**）。
 
 ---
