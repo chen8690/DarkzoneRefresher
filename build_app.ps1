@@ -132,6 +132,13 @@ if (Test-Path $ExcelSource) {
     Copy-Item $ExcelSource "$DistDir\$((Get-Item $ExcelSource).Name)" -Force
 }
 
+# 复制声明与许可证（正文文档，弹窗里是内嵌摘要，这里给一份可读的全文）
+foreach ($doc in "DISCLAIMER.md", "LICENSE", "README.md") {
+    if (Test-Path "$ScriptDir\$doc") {
+        Copy-Item "$ScriptDir\$doc" "$DistDir\$doc" -Force
+    }
+}
+
 # 创建便捷启动批处理
 # 注意：.bat 内容保持纯 ASCII —— cmd.exe 按系统代码页（936）读批处理，
 # 中文/制表符会被读错甚至拆成两条命令；中文提示交给 exe 自己输出。

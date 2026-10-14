@@ -214,8 +214,8 @@ def narrate(ev: dict) -> str | None:
         return f"等 {ev.get('wait')} 秒动画窗口（券已经扣了、新词条还没画出来）——{why}"
 
     if k == "read_retry":
-        return (f"这一屏还没稳定，再读一次（第 {ev.get('tries')} 次，"
-                f"等 {ev.get('wait')} 秒）")
+        return (f"点了刷新键之后这一行没变化（可能没点中）→ 再读一屏看看"
+                f"（第 {ev.get('tries')} 次，等 {ev.get('wait')} 秒）")
 
     if k == "wait_change":
         slot = ev.get("slot")

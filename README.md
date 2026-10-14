@@ -15,6 +15,7 @@
   - [仓库里不提交什么（`.gitignore`）](#仓库里不提交什么gitignore)
 - [附录 B：性能与真机记录](#附录-b性能与真机记录)
 - [当前版本](#当前版本)
+- [免责声明](#免责声明)
 - [许可证](#许可证)
 
 ---
@@ -96,12 +97,17 @@ python -m venv --system-site-packages .venv
 - 图形界面 `darkzone_app.py` 只用标准库 tkinter，**不用额外安装**：`python darkzone_app.py`。
 - 打包成 exe（PyInstaller）双击 `build_app.ps1`，产物在 `dist\DarkzoneRefresher\`（含 `启动.bat`）。
   该脚本必须是 **UTF-8 with BOM**（见附录 A：无 BOM 会被 PowerShell 5.1 按 936 解码而解析失败）。
-  注意：打包后 GUI 必须填「Python 解释器路径」（默认已填 3.1 那个），因为它靠真实 python 去跑
-  `-m darkzone.runner`。
+  注意：打包后 GUI 靠**真实 python** 去跑 `-m darkzone.runner`。界面上已经不再显示
+  「Python 解释器 / ADB / FFmpeg」三个输入框（它们基本不需要改，程序会自己探测：python 用
+  `DSH_PYTHON` 或 PATH、adb 用 PATH → scrcpy/Escrcpy → platform-tools、ffmpeg 用
+  `DARKZONE_FFMPEG` → PATH → 剪映自带）。确实要指到别的位置，就编辑 `app_config.json` 里的
+  `python_path` / `adb_path` / `ffmpeg_path`（键仍然保留、手改照样生效）。
 
 ### 3.5 没装 adb 会怎样
 
-启动时报 `FileNotFoundError: 找不到 adb.exe: …`；GUI 则在「ADB」那一栏报错。
+启动时报 `FileNotFoundError: 找不到 adb.exe: …`；GUI 则在设备状态栏显示 `❌ 未检测到设备`，
+点启动会**直接拒绝并自动停止**，日志里写明「未连接手机」和该怎么做（界面里没有 ADB 输入框，
+程序自己按 PATH → scrcpy/Escrcpy → platform-tools 的顺序找）。
 
 ## 4. 使用方法
 
@@ -155,7 +161,7 @@ python -m venv --system-site-packages .venv
 | `dry_run.bat` | 预演：只读屏、算坐标、打印计划，一次都不点 |
 | `run_live.bat` | 真机开刷（`--live`）；参数直接跟在后面，如 `run_live.bat --limit 20` |
 | `run_ocr_rapid.bat` | 用项目 `.venv` 里的 RapidOCR 跑（更准、每屏 7–11 s） |
-| `python darkzone_app.py` | 图形界面：设备状态、配置、日志、四个按钮（安全预演 / 真机运行 / 停止 / 清空日志），配置存 `app_config.json` |
+| `python darkzone_app.py` | 图形界面：打开先弹**使用声明**（3 秒后才可关闭）→ 设备状态、配置、日志、四个按钮（安全预演 / 真机运行 / 停止 / 清空日志），配置存 `app_config.json`。设置项只有规则表、OCR、刷新上限、确认框、等框、受理等、安全预演优先；**运行中设置会锁住**，没插手机会拒绝启动并自动停止 |
 
 三个 `.bat` 都**不写死解释器**：先找项目 `.venv\Scripts\python.exe`，没有就找
 `%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe`，再没有就用 PATH 里的 `python`。
@@ -167,6 +173,11 @@ python -m venv --system-site-packages .venv
 > 中文 Windows 控制台默认 GBK，而帮助文本里有 `↻`：早期版本 `--help` 会直接抛
 > `UnicodeEncodeError: 'gbk' codec can't encode character '\u21bb'`。现在 `runner.py` 开头统一做了
 > `sys.stdout.reconfigure(errors="replace")`，打不出的字符退化成 `?`，不再打断运行（套件同理，见附录 A）。
+>
+> 同一类坑还有一个在 GUI 上：`darkzone_app.py` 是用**管道**读子进程输出的，而管道上 Python 仍然按
+> ANSI 代码页（GBK）编码，GUI 却按 UTF-8 解码 —— 结果是日志框里中文全是乱码（`[OK] 豸 869ae4ca…`）。
+> 修法是在启动子进程前把 `PYTHONIOENCODING=utf-8` 放进它的环境变量：**只固定流编码，不动文件默认编码**，
+> 所以直接 `python -m darkzone.runner`（真控制台）的行为不变。
 
 | 参数 | 默认 | 作用 |
 |---|---|---|
@@ -494,8 +505,8 @@ logs\_stream_fn_probe.py    稳态流帧的假阴性率：同一条流连读 15 
 `.venv\`、`*_out.txt`、`build.log`、`crops\`、`app_config.json` 全在 `.gitignore` 里，不进版本库。
 仓库只留源码 + `samples\` 里那十来张标定样例 + `规则表.xlsx`（含示例装备池，可替换成自己的）。
 
-`app_config.json` 被忽略是因为它存的是**这台机器**的路径（ADB / FFmpeg / Python 解释器位置），
-换机器重新在 GUI 里填一次即可；`profiles\default.json` 是跑真机量出来的比例坐标，属于源码，必须提交。
+`app_config.json` 被忽略是因为它存的是**这台机器**的路径（ADB / FFmpeg / Python 解释器位置；这三项
+在界面上已隐藏，要改就直接编辑这个文件），换机器重新填一次即可；`profiles\default.json` 是跑真机量出来的比例坐标，属于源码，必须提交。
 
 ---
 
@@ -1101,6 +1112,27 @@ python -m darkzone.runner --version     →  runner.py 0.2.1
 
 版本号写死在 `darkzone/runner.py` 的 `__version__ = "0.2.1"`；历史版本与发布说明见
 仓库的 [Releases](https://github.com/chen8690/DarkzoneRefresher/releases)。
+
+---
+
+## 免责声明
+
+**本工具仅供个人学习、研究与自用，禁止任何商业用途；使用风险与后果由使用者自行承担。**
+
+图形界面每次打开都会先弹出这份声明的摘要，并且**停留 3 秒后才允许关闭**（按钮在倒计时结束前
+是灰的，右上角 × 与 Esc 同样不生效）。正文全文见项目根的 [`DISCLAIMER.md`](DISCLAIMER.md)，
+三块内容分别是：
+
+1. **使用风险**：自动化点击可能被判定违规而导致账号警告/封禁；每次刷新真实消耗游戏内货币，
+   识别误差或卡顿可能造成并非你本意的刷新与消耗；坐标按 3200×1440 标定，换机型会点偏。
+2. **仅供学习、禁止商用**：源码按 MIT 发布，限个人学习研究与自用，不得出售、出租、收费代刷、
+   付费分发或引流变现。《暗区突围》及其名称、界面与素材的一切权利归其权利人（腾讯及其关联公司）
+   所有，本项目与该厂商无任何关系，未获授权、认可或赞助。
+3. **后果自负**：按「现状」提供、不附带任何担保；使用者使用本工具所产生的一切后果由使用者
+   自行承担，作者与贡献者不承担任何责任。
+
+本工具在技术上也不越界：不修改游戏文件、不注入、不 hook、不破解，只调用 `adb shell input tap`
+点固定坐标，**并且绝不点「派遣」**（三行都在池内就停手，派遣由人来点）。
 
 ---
 
