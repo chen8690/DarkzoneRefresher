@@ -40,6 +40,7 @@ if hasattr(sys.stderr, "reconfigure"):
 from dataclasses import dataclass
 from pathlib import Path
 
+from .narrate import narrate
 from .ocr_match import canon, similarity
 from .rules import default_rules_path, parse_workbook, validate
 from .ui import (DIALOG_FORBID_RE, CoordMapper, boss_excluded, dialog_is_refresh,
@@ -57,7 +58,7 @@ except Exception:                           # noqa: BLE001
         return False
 
 # 本工具版本号；发布 tag 用 v0.1.0，命令行 --version 读它
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # 默认 OCR 后端；设 DARKZONE_OCR=rapid 可以让整套（含离线套件）跑在 RapidOCR 下
 DEFAULT_OCR = os.environ.get("DARKZONE_OCR", "auto")
@@ -196,6 +197,11 @@ class Config:
                                     # 挡住（要人来点）。所以出报告之前多读一屏：挂着刷新确认框就补点
                                     # 「确定」（这笔刷新本来就点过、钱也记了）并重判那一行；
                                     # 不是刷新框就只记一笔，交给人工。关掉 = 老行为（离线对照用）。
+    log_raw: bool = False           # False（默认）：控制台打**中文旁白**（`darkzone/narrate.py`），
+                                    # 让不懂事件字段的人也能看懂现在在干嘛；True：打原始事件
+                                    # JSON（老行为，排查用）。
+                                    # 两条都不影响写文件：`logs/events.jsonl` 与
+                                    # `logs/run_*.json` 里的 `events` 永远是机器可读原件。
     stale_limit: int = 3
     tap_sweep: bool = True
     auto_confirm: bool = True
@@ -328,10 +334,15 @@ class Runner:
             ev[k] = v
         self.events.append(ev)
         line = json.dumps(ev, ensure_ascii=False)
-        try:
-            print(line, flush=True)
-        except UnicodeEncodeError:
-            print(line.encode("ascii", "replace").decode(), flush=True)
+        # 控制台/GUI 打什么：默认打中文旁白（实时翻译），`--log-raw` 打原始事件。
+        # 注意 `line` 永远照原样写进 events.jsonl —— 旁白只影响**给人看的那一份**，
+        # 机器可读的那份一个字节都不变。
+        text = line if self.cfg.log_raw else narrate(ev)
+        if text:
+            try:
+                print(f"{ev['t']}  {text}" if text is not line else text, flush=True)
+            except UnicodeEncodeError:
+                print(text.encode("ascii", "replace").decode(), flush=True)
         with open(self.log_dir / "events.jsonl", "a", encoding="utf-8") as f:
             f.write(line + "\n")
         return ev
@@ -1403,6 +1414,9 @@ def main(argv=None):
     ap.add_argument("--allow-list", action="store_true",
                     help="允许从列表页开始跑（会点「选择」、必要时刷暗区首领栏）。"
                          "默认关闭：只管手机上手打开的详情页")
+    ap.add_argument("--log-raw", action="store_true",
+                    help="控制台打原始事件 JSON（排查用）。默认打中文旁白，"
+                         "两个都不影响 logs/events.jsonl 与 logs/run_*.json 里的事件原件")
     ap.add_argument("--ocr", choices=("auto", "rapid", "win"), default=DEFAULT_OCR,
                     help="OCR 后端：auto/win=Windows 自带 OCR（快，每屏约 1.5 秒）；"
                          "rapid=项目 .venv 里的 RapidOCR（更准，但每屏约 10 秒）。"
@@ -1474,6 +1488,7 @@ def main(argv=None):
                  confirm_reads=a.confirm_reads,
                  dialog_mode=a.dialog_mode, wait_dialog=a.wait_dialog,
                  blind_settle=a.blind_settle,
+                 log_raw=a.log_raw,
                  flush_pending=a.flush_pending)
     if a.image:
         from .source import ImageSource
@@ -1499,7 +1514,10 @@ def main(argv=None):
         print(f"[OK] OCR 后端: {runner.ocr_name}")
         out = runner.run()
     print_summary(out)
-    print(json.dumps(out, ensure_ascii=False, indent=2)[:6000])
+    if a.log_raw:
+        # 老行为：把报告 JSON 也刷到控制台（脚本/排查用）。默认不刷 ——
+        # 报告本来就落在 logs/run_*.json 里，给人看的那份走中文旁白 + 摘要。
+        print(json.dumps(out, ensure_ascii=False, indent=2)[:6000])
     return 0 if out.get("status") in ("ready", "dry_run") else 2
 
 

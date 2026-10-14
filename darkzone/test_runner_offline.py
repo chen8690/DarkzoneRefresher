@@ -77,9 +77,15 @@ def run(phone, **cfgkw):
     cfgkw.setdefault("read_retry_delay", 0.0)   # 测试里别真的睡
     cfgkw.setdefault("read_retries", 2)         # 测试里别多读太多次（每读一次都要 OCR）
     sink = io.StringIO()
+    runner = Runner(book, phone, Config(**cfgkw))
     with redirect_stdout(sink):
-        result = Runner(book, phone, Config(**cfgkw)).run()
-    return result, sink.getvalue()
+        result = runner.run()
+    # 控制台现在打的是中文旁白（见 darkzone/narrate.py），而本套件大量断言是在数
+    # `"kind": "read_retry"` 这类**事件**（有的还断言「不该出现某事件」）。
+    # 所以把这一轮的事件流按原样（一行一个 JSON）追加到 log 末尾 —— 老断言的
+    # 全部语义都还在：事件在，那些 `in log` 就真；事件不在，那些 `not in log` 也真。
+    events = "\n".join(json.dumps(e, ensure_ascii=False) for e in runner.events)
+    return result, sink.getvalue() + ("\n" + events if events else "")
 
 
 # ---------------------------------------------------------------- A 正常路径
